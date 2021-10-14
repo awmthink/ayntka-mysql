@@ -701,6 +701,57 @@ group by client_id, name;
 
 ## 数据库事务与并发
 
+事务就是一组SQL语句构成的一个工作单元，这个工作单元中的语句都应成功完成，否则事务会运行失败，不会带来任何副作用。
+
+### 事务的ACID属性
+
+* Automicity 原子性： 一个事务中的所有语句就像原子一样不可拆分，要么都成功的被提交，要么被失败了，前面的已经执行的语句也会被撤销。
+* Consistency 一致性：通过使用事务，数据库将始终保持一致的状态，比如不会出现有order记录，但order_item中没有记录的问题。
+* Isolation 隔离性：事务之前独立执行，互不影响，如果有2个事务在操作相同的数据，那对应的数据行会被锁定，一次只有一个事备可以更新行。
+* Durability 持久性：事务的对数据的影响一定会持久化到磁盘中，不会因为突然断电而导致丢失数据。
+
+### 创建事务
+
+```mysql
+start transaction; -- 开始事务
+
+insert into orders (customer_id, order_date, status) values (1, '2019-01-01', 1);
+insert into order_items values (last_insert_id(), 1, 1, 1);
+
+commit; -- 提交事务
+```
+
+### 事务的自动提交
+
+MySQL中通过变量`autocommit`来控制是否对事务进行自动提交，如果是1，则是开启状态，对于事务中的语句，如果没有失败，则会自动提交。如果是0，则必须在事务结束时，在commit执行时对整个事务中的语句进行提交。
+
+### 并发与锁定
+
+并发就是指对于MySQL中的数据库和数据表，会存在多个用户同时操作的情况，这时如果一个用户正在读取一个正在被另一个用户修改或删除的数据时，就会存在问题。
+
+并发导致的4种问题：
+
+* Lost Updates：
+* Dirty Reads：读取到的数据是另外一个事务执行中更新的，但另一个事务可以会失败或Rollback，导致读取的无效的数据。
+* Non-repeating Reads：在事务中前后多次读取同一数据，会出现数据不一致的问题。
+* Phantom Reads：一个事务正在使用条件过滤查询一些数据，比如积分大于1000的用户，但另一个事务正在对过滤中的一些条件列进行修改，把一些原本积极不足1000的用户更新为了超过1000的用户，这个事务会影响前面的事务的查询结果。
+
+### 数据库的隔离级别
+
+* READ UNCOMMITTED：基本无任何隔离，并发的事务可以彼此互相读取未Commit的数据。
+* READ COMMITED：数据库将保证读取的数据一定是已经COMMIT的数据，不会存在，更新了但未提交的数据。这样可以避免“ 脏读”。
+* REPEATABLE READ：它在READ COMMITTED基础上保证一个事务内对同一数据的多次读取是一致的。即使有另外一个事务在对这个数据做更新，那这个更新对当前的事务是不可见的。
+* SERIALIZABLE：提供了最高的隔离级别，可以解决所有的并发问题。在这个级别下，我们的事务都是顺序执行的。
+
+从上到下隔离级别越来越高，性能和并发就会受到越大的影响，但不会有太多的并发上的问题。 
+
+```mysql
+show variables like 'transaction_isolation';
+set [session] transaction isolation level serializable;
+```
+
+
+
 ## MySQL支持的数据类型
 
 MySQL中一共支持大约5类的数据类型，包括了：String、Numeric、Date and Time、Blob、Spatial。
@@ -848,9 +899,48 @@ where product_id = 1;
 
 ## 数据库设计
 
-## 创建与使用索引
+是设计一个好的数据库或数据表，必须遵循一些基本的设计步骤，下面我们就来介绍其中的一些关键步骤。
 
-## 创建与删除数据库
+### 数据建模
+
+* 理解场景与需求
+* 识别业务中的实体、事物或概念以及它们之间的关系，然后构建一个概念模型
+* 构建逻辑模型，逻辑模型是独立于数据技术的抽象数据模型，我们在这一步往往会明确每个实体有哪些属性，以及每种属性的数据类型。
+* 构建物理逻辑：在数据库之上构建具体的数据库与表，索引，主键，存储过程等等。
+
+对于概念模型我们可以使用ER（Entity Relation）或者UML来表示。
+
+### 实体之间的关系
+
+在使用ER来描述数据时，我们将实体与实体之间的关系抽象为3种：一对一，一对多和多对多。在构建概念模型时，我们可以使用多对多，但在构建物理模型时，会受到数据库引擎本身的限制，像MySQL就是不支持多对多关系的，一般会通过一个链接表来解决。
+
+### 选择主键
+
+首先主键必须要能够唯一的标识数据表中的一行数据，其次主键一般选择的存储空间少或简单的类型，因为主键往往会作为别的表的外键，导致数据被重复存储，选择较轻量的类型，可以使得存储更加有效率。最后主键一般是不能够修改的字段。
+
+### 外键的约束
+
+对于一个选课系统来说，学生实体（students）和课程实体（coursers）之间是一个多对多的关系，一个学生可以选多门课，一门课也会被多个学生选择；在这里我们就会单独提取一个选课的实体（enrollments），用于记录学生选课这一事件，这个表也称为链接表。
+
+对于enrollments表，我们可以选择它里面的student_id和course_id这两个外键作为它自己的联合主键，这样做的好处时，在插入数据时，可以有一定的数据校验的功能，比如避免一个学生多次选择同一门课（会产生相同的主键）。但它也有坏处，比如如果还有一张表的外键是enrollments表，那么它就必须也包括student_id和course_id。
+
+对外键另外的约束行为就是，当我们对学生表或课程表的主键进行修改或删除时，enrollments表应该对应做一些数据调整，比如：如果我们将某一个学生从students中删除，那他对应的所有选课也应该在enrollments表中删除。当然我们也可以选择保留。
+
+### 数据库的三大范式
+
+ **第一范式**：每一行的所有列都应该有单一值，且不能出现重复列。这就要求取数据表中的列不能是一个列表。
+
+**第二范式**：每一张表都应该只描述一种实体，表中的每一列都是在描述这个实体的属性。
+
+**第三范式**：表中的列不应该派生自其他列，比如是通过其他列运算得出。
+
+上面三大范式的核心思想都是想要去消除数据库中的数据冗余。
+
+另外有一条很重要的建议是：不要过份的对所有概念进行建模，也不需要在很高的抽象层次进行建模来应对未来的需求，只需要为现下问题制定最佳解决方案就行。为当前的需求建模，而不是为整个世界建模。
+
+## 数据库的实现
+
+### database的创建与删除
 
 ```sql
 -- 创建数据库
@@ -870,5 +960,231 @@ from invoices
 join clients as c using (client_id)
 where payment_date is not null;
 ```
+###  Table的创建与删除
+
+```mysql
+-- 创建数据表
+create table if not exists customers(
+	customer_id int primary key auto_increment,
+    first_name varchar(50) not null,
+    last_name varchar(50) not null,
+    points int not null default 0,
+    email varchar(50) not null unique
+);
+-- 删除数据表
+drop table if exists customers;
+-- 修改数据表
+alter table customers 
+	add address varchar(50) not null after last_name,
+	add phone varchar(50) not null after address,
+	modify column first_name varchar(55) default '',
+	drop points;
+```
+
+### 主键的添加与删除
+
+```mysql
+-- 对一个已经存在的表的主键进行增加或删除
+alter table orders
+	add primary key (order_id, other), -- 添加主键
+	drop primary key; -- 删除主键时不用指定对应的字段
+```
+
+### 外键的创建
+
+```mysql
+-- 在创建表时添加外键及约束
+create table if not exists orders (
+	order_id int primary key,
+    customer_id int not null,
+    foreign key fk_orders_customers (customer_id) 
+    	references customers (customer_id) 
+    	on update cascade
+    	on delete no action
+);
+-- 在一个已经存在的表中修改外键或约束
+alter table orders
+	drop foreign key fk_order_customers,
+	add foreign key fk_orders_customers (customer_id) 
+    	references customers (customer_id) 
+    	on update cascade
+    	on delete no action
+```
+
+### 数据库与表的字符集与排序规则
+
+字符集决定了对于一些非英语国家的文字，mysql内如何来编码存储。排序规则决定了对于对应的文字，怎么规定它的排序规则。
+
+比如字符集为utf-8，默认的排序规则是uft8_general_ci，其中ci表示case in-insensitive（不区分大小写）。
+
+我们可以在数据库、表、列这三个粒度上设置字符集与排序规则，一般来说我们不需要手动修改排序规则。
+
+```mysql
+-- 指定与修改数据库的字符集
+create database db_name character set latin1;
+alter database db_name character set utf8;
+-- 指定与修改数据表的字符集
+create table table1(
+) character set latin1;
+alter table table1 character set utf8;
+-- 指定和修改某一列的字符集
+create table table1(
+	first_name varchar(50) character set latin1 not null
+);
+alter table table1 modify column first_name varchar(50) character set utf8 not null;
+```
+
+### 存储引擎
+
+```mysql
+alter table customers engine = InnoDB;
+```
+
+## 创建与使用索引
+
+### 使用索引的好处
+
+使用索引可以显著提供查询的性能。 索引本质是数据库引擎用来快速查找数据的数据结构，一般上来说都是一种树状的结构，InnoDB引擎使用的是B+树。索引往往比较小，所以可以很方便的放到内存中，来获取较好的查找效率。但是使用索引也不是完全没有代价的：
+
+* 使用索引会增大数据库的存储空间，因为index是在数据表之外独立存储的。
+* 拖慢数据库的操作，当我们对数据进行增、删、改时，都需要额外的同时更新索引。
+
+基于上面的考虑，当前我们使用索引时，应该只为核心查询提供索引，而不是为数据表的所有列都建立索引。
+
+### 在MySQL中创建、删除与查看索引
+
+```mysql
+-- 创建索引
+create index idx_state on customers (state);
+
+-- 查看索引
+show indexes in customers;
+
+-- 删除索引
+drop index idx_state on customers;
+```
+
+ MySQL为自动的为主键和外键创建索引。
+
+### 创建前缀索引
+
+当我们对类型为CHAR、VARCHAR、TEXT、BLOB的列创建索引时，索引往往会占用较大的存储空间。
+
+这个时候我们可以只对字段的一部分建立索引：
+
+```mysql
+-- 为last_name列建立索引，只使用最多前20个字符
+create index idx_lastname on customers (last_name(20))
+```
+
+### 全文索引
+
+ ```mysql
+ -- 创建全文索引
+ create fulltext index idx_title_body on posts (titile, body);
+ -- 用关键字查找
+ select * from posts where match(title, body) against('react redux');
+ ```
+
+### 复合检索
+
+问题的引入：
+
+```mysql
+select customer_id from customers where state = 'CA' and points > 1000;
+```
+
+虽然我们在state和points列上都建立了索引，但执行上面的检索语句时，MySQL只会选择一个索引，这里会选择idx_state，先定位到state='CA'的所有行，再全部扫描一遍找到points>1000的记录。
+
+```mysql
+-- 在state和points两列上建立联合索引
+create index idx_state_points on customers (state, points);
+```
+
+MySQL最多可以为16个列同时建立索引。
+
+当我们使用复合检索时，需要注意这些列的顺序，一般来说有3点建议：1）经常查询的列放在前面 ；2）将基数大的列放在前面。3）充分结合自己的查询需求。
+
+### 索引失效的问题
+
+```mysql
+-- 下面的查询将导致会搜索数据库的所有行
+select customer_id from customers where state = 'CA' or points > 1000;
+-- 我们可以优化为
+select customer_id from customers where state = 'CA'
+union
+select customer_id from customers where points > 1000;
+```
+
+### 使用索引的加速排序
+
+当我们在没有索引的列上进行排序时，将会使用fileSort，而在使用索引的列上排序时，则使用的是index排序。性能往往会相差10倍。
+
+### 覆盖索引
+
+covering index指的是我们查询的数据（比如primary key）可以直接从index中读取，而不用读取数据表。
+
+### 使用索引的建议
+
+先看看where子句后面的列是否有索引，再看看order by的列是否有索引，最后看一下select的内容是否在索引中。
 
 ## 数据库安全
+
+### 创建用户
+
+```mysql
+-- 创建一个用户john并同时设置他的密度
+create user john identified by '1234'
+-- 创建一个用户john，同时限制他只能通过codewithmosh.com以及子域来连接数据库
+create user john@'%.codewithmosh.com' identified by '1234'
+```
+
+### 查看所有用户
+
+```mysql
+select * from mysql.user;
+```
+
+### 删除用户
+
+```mysql
+drop user bob@hostname;
+```
+
+### 修改密码
+
+```mysql
+-- 设置别的账号的密码
+set password for john = '1234'
+-- 修改自己账号的密码
+set password = '1234'
+```
+
+### 授予权限
+
+创建一个普通用户，并授予sql_store数据库中所有表的查询、插入、更新、删除、执行权限。
+
+```mysql
+create user moon_app identified by '1234';
+grant select, insert, update, delete, execute on sql_store.* to moon_app;
+```
+
+创建一个数据库管理员用户，`all`表示所有权限，`*.*`表示所有数据库的所有表格。
+
+```mysql
+grant all on *.* to amdin;
+```
+
+### 查看权限
+
+```mysql
+show grants for john;
+```
+
+### 撤销权限
+
+```mysql
+revoke create view on sql_store.* from moon_app;
+```
+
+相比较于授予权限，撤销权限，只需要把grant改为revoke，把to改为from。
