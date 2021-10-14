@@ -701,6 +701,151 @@ group by client_id, name;
 
 ## 数据库事务与并发
 
+## MySQL支持的数据类型
+
+MySQL中一共支持大约5类的数据类型，包括了：String、Numeric、Date and Time、Blob、Spatial。
+
+### String类型
+
+* CHAR(x)：为固定长度的字符串，无论实际存储的字符串长度为多少，它都会占用x个字符的存储空间，最大的长度为255。
+
+* VARCHAR(x)：变长存储的字符串，它会根据字符串的实际长度而动态的分配存储空间，但最大不超过x个字符空间。VARCHAR最大支持的长度为65535。
+* TINYTEXT：最大可以存储255个字符
+* TEXT：最大可以存储65535个字符，对于这个范围内的选择，我们最好是使用VARCHAR。
+* MEDIUMTEXT：最长可以存储16MB的字符串
+* LONGTEXT：最大可以存储4GB的字符串，可以用于存储一些日志等信息
+
+需要注意的是上面字符串类型的存储能力都是按字符个数来定的，如果是存储非anscii码，那实际占用的存储空间，会更大一些。 
+
+### 整数类型
+
+* TINYINT（MySQL扩展类型）：占用1B空间，范围是：[-128, 127]
+* SMALLINT：占用2B空间，范围是：[-32K, 32K]
+* MEDIUMINIT（MySQL扩展类型）：占用BB空间，范围是：[-8M, 8M]
+* INT/INTERGER：占用4B空间，范围是：[-2B, 2B]
+* BIGINT（MySQL扩展类型）：占用8B空间，范围是：[-9Z, 9Z]
+
+我们在使用整数类型时，也可以在后续加（x），它表示的是补0，如果数值位数不足x时，前面会补0。我们还可以在上述类型前面加上UNSIGNED用于表示无符号数，无符号数的范围是是从0开始的。
+
+### 小数类型
+
+* DECIMAL(p, s)：p表示小数的精度，也就是小数的位数，s表示小数点后的位置，它用于表示高精度的数字，比如在银行系统中。
+* DEC、NUMERIC、FIXED 和DECIMAL是一个意思。
+* FLOAT：4B浮点数，可以表示更大的数，但精度有限
+* DOUBLE/REAL ：8B浮点数，比FLOAT可以表示的数的范围更大，精度也更高。
+
+### 布尔类型
+
+* BOOL/BOOLEAN：只会占用1个字节，它的字面值为TRUE和FALSE。
+
+ ### 枚举类型
+
+* ENUM(VALUE1, VALUE2, VALUE3)：枚举值整体构成了类型的定义。
+
+实际中我们往往比较少的使用枚举类型，在需要用于枚举值的地方，我们往往会把枚举值列在一个单独的查询表（Lookup Table）中。
+
+### 集合类型
+
+* SET(VALUE1, VALUE2, VALUE2)：包含了有限个元素的集合，对应类型的字段可以是这个集合中若干个值构成的子集合。
+
+ENUM和SET就类似于我们在Excel表格中的下拉选择框，枚举类型只允许选择一种，而集合类型则可以选择多种。
+
+### DATE/TIME类型
+
+* DATE：以YYYY-MM-DD格式的日期，在1000-01-01和9999-12-31之间。
+* TIME：存储时间为HH::MM::SS格式
+* DATETIME：占用8B，可以存储更大范围的时间点
+* TIMESTAMP：占用4B，只能存储2038年之前的时间戳
+* YEAR：以2位或4位数字格式来存储的年份，如果长度指定为2，即YEAR(2)，则年份就可以为1970至2069，如果长度指定为4，则年份范围为1901-2155，默认长度为4。
+
+### Blob类型
+
+我们可以用blob在数据库中存储图像、视频、PDF、word文件等，几乎所有的二进制数据。
+
+* TINYBLOB: 255B
+* BLOB: 65K
+* MEDIUMBLOB: 16M
+* LONGBLOB: 4GB 
+
+不建议使用MySQL来存储大量的blob类型的数据，它会大大增加MySQL数据库的体积，导致我们不能很友好的对数据库进行备份，同时也会很影响性能，我们从数据库中读取blob数据，几乎一定比直接在文件系统中读取的慢。
+
+### JSON类型
+
+比如我们为我们`sql_store`数据库中的`products`表增加一列为`properties`用于表示商品的一些其他属性项，比如对于电视产品来说，我们可以如下更新它的properties字段。
+
+```mysql
+-- 直接使用json字符串来更新数据表中的json类型的行
+update products
+set properties = '
+{
+    "dimensions": [1, 2, 3],
+    "weight": 10,
+    "manufacturer": {"name": "sony"}
+}
+'
+where product_id = 1;
+```
+
+除了用json字符串外，我们还可以用mysql提供的json函数（`JSON_OBJECT`、`JSON_ARRAY`）来构造json对象。
+
+```mysql
+update products
+set properties = JSON_OBJECT(
+  'weight', 10, 
+  'dimensions', JSON_ARRAY(1,2,3),
+  'manufacturer', JSON_OBJECT('name', 'sony')
+)
+where product_id = 1;
+```
+
+对JSON字段进行查询
+
+ ```mysql
+ select product_id, JSON_EXTRACT(properties, '$.weight') as weight
+ from products
+ where product_id=1;
+ ```
+
+简洁的写法：
+
+ ```mysql
+select product_id, 
+       properties ->'$.weight' as weight, 
+       properties -> '$dimensions[0]'as dimension , -- 对于数组，则直接用下标
+       properties ->> '$.manufacturer.name' as manufacturer -- 加->>是为会去除双引号
+from products
+where product_id=1;
+ ```
+
+更新已经记录中已经存在的json对象的某一个字段。
+
+```mysql
+update products
+set properties = JSON_SET(
+  properties,
+  '$.weight', 20,
+  '$.age', 10 -- 新增字段
+)
+where product_id = 1;
+```
+
+`JSON_SET`函数接收原json对象`properties`以及要修改的字段和其值，返回了一个新的json对象。
+
+同样的还有`JSON_REMOVE`：
+
+```mysql
+update products
+set properties = JSON_REMOVE(
+  properties,
+  '$.age'
+)
+where product_id = 1;
+```
+
+### Spatial空间数据类型
+
+**TBD**
+
 ## 数据库设计
 
 ## 创建与使用索引
