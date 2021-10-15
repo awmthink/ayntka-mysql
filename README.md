@@ -2,15 +2,6 @@
 
 **A**ll **y**ou **n**eed **t**o **k**now **a**bout **MySQL**
 
-## 参考资料
-
-- [CodeWithMosh MySQL Course](https://www.bilibili.com/video/BV1UE41147KC)
-- [MySQL Tutorial](https://www.mysqltutorial.org)
-- [MySQL必知必会](https://m.douban.com/book/subject/3354490/)
-- [数据库设计工具: DBDiagram](https://dbdiagram.io/)
-- [数据库数据标记语言：DBML](https://www.dbml.org/)
-- [mycli: 强大的MySQL命令行工具](https://github.com/dbcli/mycli)
-
 ## 基本概念的介绍
 
 ### 数据库 Database
@@ -374,7 +365,7 @@ where points >=3000
 order by first_name;
 ```
 
-## 数据的插入
+## 数据的插入、更新和删除
 
 当我们全量字段插入时，对于主键，往往是自增的，指定default是最好的，对于可以为空的字段，我们可以设置有效的值，也可以设置为`null`，对于其他有默认值的字段，可以使用`default`设置字段为默认值。
 
@@ -412,8 +403,7 @@ values (last_insert_id(), 1, 1, 2.95), (last_insert_id(), 2, 1, 3.95);
 ```sql
 ```
 
-
-## 数据的更新
+数据的更新示例
 
 ```sql
 -- 使用有效值
@@ -448,8 +438,7 @@ update invoices
 set payment_total = invoice_total * 0.5, payment_date = due_date
 where client_id in (select client_id from clients where state in('CA', 'NY'));
 ```
-
-## 数据的删除
+删除数据表中的指定的一行或多行：
 
 ```sql
 delete from invoices
@@ -1215,7 +1204,7 @@ where product_id = 1;
 
 另外有一条很重要的建议是：不要过份的对所有概念进行建模，也不需要在很高的抽象层次进行建模来应对未来的需求，只需要为现下问题制定最佳解决方案就行。为当前的需求建模，而不是为整个世界建模。
 
-## 数据库的实现
+## 数据库的创建、删除、属性设置
 
 ### database的创建与删除
 
@@ -1237,7 +1226,7 @@ from invoices
 join clients as c using (client_id)
 where payment_date is not null;
 ```
-###  Table的创建与删除
+###  table的创建与删除
 
 ```mysql
 -- 创建数据表
@@ -1465,3 +1454,13 @@ revoke create view on sql_store.* from moon_app;
 ```
 
 相比较于授予权限，撤销权限，只需要把grant改为revoke，把to改为from。
+
+
+## 参考资料
+
+- [CodeWithMosh MySQL Course](https://www.bilibili.com/video/BV1UE41147KC)
+- [MySQL Tutorial](https://www.mysqltutorial.org)
+- [MySQL必知必会](https://m.douban.com/book/subject/3354490/)
+- [数据库设计工具: DBDiagram](https://dbdiagram.io/)
+- [数据库数据标记语言：DBML](https://www.dbml.org/)
+- [mycli: 强大的MySQL命令行工具](https://github.com/dbcli/mycli)
