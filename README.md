@@ -729,9 +729,252 @@ MySQL中如何实现视图：TBD。
 
 ## 存储过程和函数
 
-存储过程类似sql中的定义函数，它将一系列的sql语句包装在一起，重新起个名字，后续我们就可以直接使用这个名字来代替一系列复杂的sql语句。
+存储过程是一系列SQL语句组成的一个过程调用，它类似于函数，支持传入参数，但它与MySQL中函数不同的是，它可以返回直接返回一个数据表或多个值。存储过程有3个作用：
+
+1. 存储和管理SQL代码：将一些复杂的数据库操作流程保存和管理起来，避免与应用程序逻辑代码耦合在一起。
+2. 大部分的DBMS会对存储过程里的SQL语句进行优化
+3. 可以不需要将整个数据库暴露出去，而只定义好一些存储过程，把这些存储过程暴露给用户，让用户不至于随意操作数据。
+
+### 存储过程的创建、删除、更新和使用
+
+```mysql
+-- 由于存储过程中的语句都是以;结尾，为了和sql本身执行层面的语句区分开，先使用delimiter将sql的默认分隔符改为其他符号，一般改为双美元符
+delimiter $$
+create procedure get_clients()
+begin
+	-- sql1;
+	-- sql2;
+end$$
+delimiter ;
+
+-- 使用call关键字来调用存储过程
+use sql_invoicing;
+call get_clients();
+-- 或者使用作用域的形式
+call sql_invoicing.get_clients();
+
+-- 删除存储过程
+drop procedure if exists get_clients;
+
+-- 修改存储过程，只需要将create改为alter就可以了
+delimiter $$
+alter procedure get_clients()
+begin
+	-- modified sql1;
+	-- modified sql2;
+end$$
+delimiter ;
+```
+
+> tips：像views和procedures，我们在实际的应用程序中，我们最好用一些专题的文件夹来管理这些sql语句，比如views和procedures等。
+
+### 带参数的存储过程
+
+我们可以使用以下的语法来在创建带参数的存储过程，然后在后续的调用中，动态的传入不同的参数。
+
+```mysql
+use sql_invoicing;
+drop procedure if exists get_clients_by_state;
+
+delimiter $$
+
+create procedure get_clients_by_state(state char(2))
+begin
+	-- 由于我们这里传的参数与数据表的字段同名，所以这里给表加一个alias name
+	select * from clients as c where c.state = state;
+end$$
+
+delimiter ;
+
+-- 带参数调用
+call get_clients_by_state('CA');
+```
+
+如果我们想使用一些默认参数，比如像上面的`get_clients_by_state`，我们想通过传入`NULL`来表示，选择所有州的客户。
+
+```mysql
+create procedure get_clients_by_state(state char(2))
+begin
+	if state is null then
+		select * from clients;
+  else
+		select * from clients as c where c.state = state;
+	end if;
+end$$
+```
+
+我们可以借助`ifnull`来简化上面的代码：
+
+```mysql
+create procedure get_clients_by_state(state char(2))
+begin
+	-- 当state为null时，筛选条件变成了c.state = c.state
+	select * from clients as c where c.state = ifnull(state, c.state);
+end$$
+```
+
+### 参数有效性判定
+
+我们可以在存储过程的语句块中加入对于传入参数的有效性检查：
+
+```mysql
+if payment_amount <= 0 then
+  -- 抛出错误，错误码为2203，错误信息为'invalid payment amout'
+	signal sqlstate '22003' set message_text = 'Invalid payment amount';
+end if;
+```
+
+需要注意的是：过犹不及（"Too much of a good thing is a bad thing"），加入过多的参数验证会让代码过于复杂难以维护，像 payment_amount 非空这样的验证就不需要添加因为 payment_amount 字段本身就不允许空值因此MySQL会自动报错。
+
+### 输出参数
+
+用的不多，下面给一个简单的示例，获取指定客户未支付过的发票的个数和总额。
+
+```mysql
+create procedure get_unpaid_invoices_for_client(
+  client_id int, -- 输入参数
+  out invoice_count int, -- 输出参数
+  out invoice_total decimal(9,2)) -- 输出参数
+begin
+	select count(*), sum(i.invoice_total) into invoice_count, invoice_total
+	from invoices i where i.client_id = client_id and payment_total = 0;
+end
+```
+
+### 变量
+
+一共有2种定义变量的方法
+
+1. 用户或会话变量：`set @var=value`，使用的时候来是`@var`
+2. 本地局部变量：`declare varname datetype [default value]`
+
+变量的用法可以参考下面函数小节的例子。我们在函数体内定义了3个局部的变量。
+
+### 函数
+
+我们在前面介绍过很多MYSQL中的内置函数，比如聚合函数（AVG/SUM/MAX）、处理数值、文本、日期的函数，MYSQL同时允许我们自定义函数。
+
+函数和储存过程的作用非常相似，唯一区别是函数只能返回单一值而不能返回多行多列的结果集，当你只需要返回一个值时就可以创建函数。另外，函数设置和函数体之间，有一段确定返回值类型和函数属性的语句段。
+
+```mysql
+DROP FUNCTION IF EXISTS get_risk_factor_for_client;
+
+DELIMITER $$
+
+CREATE FUNCTION get_risk_factor_for_client(client_id INT) 
+RETURNS INTEGER
+-- DETERMINISTIC：用于说明函数的输出只和输入相关，相同的输入一定会产生相同的输出
+READS SQL DATA -- 用于说明函数内部会使用select来进行数据读取
+-- MODIFIES SQL DATA：用于说明函数内部使用insert update 或 delete来更新数据
+BEGIN
+    DECLARE risk_factor DECIMAL(9, 2) DEFAULT 0;
+    DECLARE invoices_total DECIMAL(9, 2);
+    DECLARE invoices_count INT;
+
+    SELECT SUM(invoice_total), COUNT(*) INTO invoices_total, invoices_count
+    FROM invoices i WHERE i.client_id = client_id;
+    -- 注意不再是整体risk_factor而是特定顾客的risk_factor
+
+    SET risk_factor = invoices_total / invoices_count * 5;
+    RETURN IFNULL(risk_factor, 0);       
+END
+
+DELIMITER ;
+```
+
+调用函数的示例
+
+```mysql
+SELECT 
+    client_id,
+    name,
+    get_risk_factor_for_client(client_id) AS risk_factor
+FROM clients
+```
 
 ## 触发器和事件
+
+### 触发器的增、删、改、查
+
+触发器的机制可以让我们在一个指定的数据表中的数据在插入、更新、删除时，自动的执行一系列SQL语句，这一系列的语句 ，可以用于更新相关联的表来保证数据完整性，也可以将这些更新记录到一个新表中，达到数据表审计的作用。
+
+```mysql
+-- 删除触发器
+drop trigger if exists payment_after_insert;
+
+delimiter $$
+
+-- trigger的命名风格一般是：表名_after/before_insert/update/delete
+create trigger payment_after_insert
+	after insert on payments -- 触发条件语句
+	for each row -- 触发频率
+begin
+	-- 使用NEW来引用新插入的一行记录或更新后的一行记录
+	-- 使用OLD来引用删除前或更新前的一行记录
+	update invoices set payment_total = payment_total + NEW.amount
+	where invoice_id = NEW.invoice_id;
+end$$
+
+delimiter ;
+
+-- 查看触发器
+show triggers like 'payments%'
+```
+
+### 事件的使用
+
+事件是一段根据计划执行的代码，可以执行一次，或者按某种规律执行，比如每天早上10点或每月一次
+
+通过事件我们可以自动化数据库维护任务，比如删除过期数据、将数据从一张表复制到存档表 或者 汇总数据生成报告，所以事件十分有用。
+
+MySQL的后台有一个事件调度器，它时刻寻找需求执行的事件。我们可以查看系统变量来确保MySQL启动了这个事件调度器：
+
+```mysql
+show variables like 'event%';
+```
+
+```text
++-----------------+-------+
+| Variable_name   | Value |
++-----------------+-------+
+| event_scheduler | ON    |
++-----------------+-------+
+```
+
+我们也可以手动打开或关闭
+
+```mysql
+set global event_scheduler = ON/OFF;
+```
+
+例子：创建一个事件，每年执行一次，删除超过一年的日志记录。
+
+```mysql
+delimiter $$
+
+create event yearly_delete_stale_audit_row
+-- starts 和 ends是可省略的
+-- 如果周期性的则使用`every`关键字，如果是一次性的，则使用`at`
+on schedule every 1 year starts '2019-01-01' ends '2029-01-01'
+do begin
+	delete from payments_audit where action_data < now() - interval 1 year;
+end$$
+
+delimiter ;
+```
+
+事件的查看、删除、修改、启停
+
+```mysql
+show events like 'yearly%'; -- 查看每年运行的周期性事件
+
+drop events if exists yearly_delete_stale_audit_row;
+
+-- 修改的话，直接将create改为alter就可以了
+
+-- 禁用或开启事件
+alter event yearly_delete_stale_audit_row disable/enable;
+```
 
 ## 数据库事务与并发
 
