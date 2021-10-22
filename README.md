@@ -8,7 +8,11 @@
 
 > A **Database** is a collection of data stored in a format that can easily be accessed
 
+数据库是以某种形式存储（一般需要易于访问）的数据的集合。
+
 为了更方便的管理我们的数据，我们一般会使用一种叫数据库管理系统（Database Management System，简称DBMS）的系统级软件，它提供了用户连接的接口，方便我们可以在连接数据库后进行插入、查询、修改和删除数据。
+
+![image-20211022154935406](./images/image-20211022154935406.png)
 
 现在主流的数据库分为2类，一类是关系型（Relational）数据库，一类是非关系型（NoSQL）数据库。
 
@@ -38,6 +42,8 @@
 
 * 键（key）：一般我们从数据表中获取某一行数据时，都需要通过一个键值来定位到某一行。
 
+### MYSQL的简介与安装
+
 ## 本教程中使用的数据库说明
 
 本教程中一共涉及到4个数据库（database）
@@ -45,6 +51,8 @@
 ### sql_store数据库
 
 sql_store是一个类似于在线电商的后台数据库，一共有7张表，其中orders是整个数据库的核心表，记录的是一次购物订单，每个购物订单订单对应一个消费者，对应多个商品，对应一个货运。可以想象为我们在京东或淘宝上的一个订单，里面包括了多个商品，最终这个订单是有一个物流来承运。
+
+这个数据库中的核表是订单，订单是由customers下单，由shippers来送货，一个订单里可能会有多个订单项，订单项里包括了商品，数量，价格等。
 
 ![](./images/sql_store.png)
 
@@ -153,7 +161,7 @@ sql_hr表示是公司人员管理的数据库，包括了2张表，一张是员�
 
 ### sql_invoicing数据库
 
-sql_invoicing是财务数据库，第个客户可能对应多个交易，每个交易对应一张发票，每张发票可能会产生多笔支付。
+sql_invoicing是财务数据库，每个客户可能对应多个交易，每个交易对应一张发票，每张发票可能会产生多笔支付。比如JD购物，每次交易时都会生成发票，但该交易可能是分期付钱的。
 
 ![](./images/sql_invoicing.png)
 
@@ -169,6 +177,8 @@ sql_invoicing是财务数据库，第个客户可能对应多个交易，每个�
 | phone      | varchar(50)                | 手机号   |
 
 **invoices表**
+
+从数据库设计的角度，这里不应该把payment_total和payment_data放在invoices表中，为了保证数据库数据的一致性，在我们更新payments表时，必须同步修改invoices表中相关支付的字段。
 
 | 字段名        | 数据类型                           | 意义       |
 | ------------- | ---------------------------------- | ---------- |
@@ -199,9 +209,19 @@ sql_invoicing是财务数据库，第个客户可能对应多个交易，每个�
 | payment_method_id | tinyint, not null, primary key, auto increment | 支持方法id     |
 | name              | varchar(50), not null                          | 支付方法枚举值 |
 
+### 数据库导入
+
+我们可以通过mysql的客户端连接到mysql server后，在交互式命令行下，使用`source`将我们的数据导入到MySQL中。
+
+```mysql
+source ./create-databases.sql
+```
+
 ## 单数据表的数据的查询
 
 ### 简单的查询示例
+
+使用select来选择数据表中需要过滤出来的属性名，使用`*`代表所有列。
 
 ```sql
 -- 查询整个表中的数据
@@ -219,6 +239,10 @@ select customer_id, first_name, points from customers;
 
 ### 使用`select`子句对查询的数据进行加工
 
+我们也可以在现有表的属性上，扩展一些属性作为查询结果，使用使用`as`来命名该列。
+
+`distinct`可以用来对筛选出来值进行过滤。
+
 ```sql
 -- 多增加了new price这一列，是通过unit_price来计算加工出来的
 select name, unit_price, unit_price * 1.1 as 'new price' from products;
@@ -231,6 +255,7 @@ select distinct state from customers;
 
 ```sql
 -- 在date类型上可以直接使用比较运算符（>、<、=、!=、<>）
+-- date类型本质上可以看成是数值类型
 select * from customers where birth_date > '1990-01-01';
 
 -- 多条件组合查询，可以使用 AND、OR、NOT来进行逻辑组合
@@ -260,9 +285,9 @@ select * from customers where first_name like 'b____y';
 -- [a-h]匹配一个范围列表
 select * from customers where last_name regexp '^B[RU]';
 
--- 查找空值
+-- 查找空值 IS NULL
 -- 查找所有还未发货的订单，即shipped_data是空
-select * from orders where shipped_date is null;
+select * from orders where shipped_date IS NULL;
 ```
 
 ### 使用`order by`子句对查询结果进行排序
@@ -289,10 +314,16 @@ select * from customers limit 6, 3;
 
 ```sql
 -- 查询orders表，并且从customers表中获取用消费者的名字
+-- 默认的JOIN，实际是INNER JOIN
 select order_id, c.customer_id, first_name, last_name
 from orders
 join customers as c
 on orders.customer_id = c.customer_id;
+
+-- 不使用join关键字的写法，这个不是ANSI的写法，推荐使用显示的使用JION
+SELECT order_id, c.customer_id, first_name, last_name
+FROM orders, customers as c
+WHERE orders.customer_id = c.customer_id;
 
 -- 跨库联合查询，需要在其他库的表名前加上库名
 select * 
@@ -340,7 +371,7 @@ using (order_id, product_id);
 -- 让引擎自动去判断连接条件，这个例子中是使用customer_id
 select * from customers natural join orders;
 
--- 交叉连接 cross join
+-- 交叉连接 cross join，笛卡尔积
 -- 让两张表组合，比如一张表存放的是尺寸，一张表存放的是颜色
 -- 那么就可以对这两张表进行cross join生成所有尺寸颜色组合
 select * from size cross join color;
@@ -385,7 +416,10 @@ values('1990-01-01', 'John', 'Smith', 'address', 'city', 'CA');
 
 ```sql
 insert into products(name, quantity_in_stock, unit_price)
-values ('product 1', 12, 1.67), ('product 2', 3, 2.34), ('product 3', 7, 0.88);
+values 
+	('product 1', 12, 1.67), 
+	('product 2', 3, 2.34), 
+	('product 3', 7, 0.88);
 ```
 
 利用`last_insert_id`来获取上次插入的数据的`id`
@@ -398,9 +432,19 @@ insert into order_items
 values (last_insert_id(), 1, 1, 2.95), (last_insert_id(), 2, 1, 3.95);
 ```
 
-使用`select`子句来进行数据插入
+使用`select`子句来进行数据插入，将从一个表中的查询结果直接插入到另一个表中。
 
 ```sql
+-- 先创建一个简单的示例表
+create table simple_customers (
+	customer_id int auto_increment primary key,
+	first_name varchar(50) not null,
+	last_name varchar(50) not null,
+	state char(2) not null
+);
+-- 从customers表中筛选数据直接insert到示例表中
+insert into simple_customers (first_name, last_name, state) 
+select first_name, last_name, state from customers where state='VA';
 ```
 
 数据的更新示例
@@ -447,6 +491,8 @@ where client_id = (select client_id from clients where name = 'Nyworks')
 
 ## 数据统计与聚合
 
+### 聚合函数
+
 MySQL中支持的常用的统计函数有：
 
 Function|功能描述
@@ -469,7 +515,9 @@ from invoices
 where invoice_date > '2019-07-01';
 ```
 
-分组统计
+### 分组统计
+
+需要注意的是使用group分组统计时，select里的输出列，除了聚合结果和分组的属性，不能使用表中的其他属性。
 
 ```sql
 select client_id, sum(invoice_total) as total
@@ -479,7 +527,19 @@ group by client_id
 order by total DESC;
 ```
 
-使用`having`进行分组后的筛选
+分组汇总的结果为：
+
+```
++-----------+--------+
+| client_id | total  |
++-----------+--------+
+| 5         | 490.50 |
+| 3         | 419.82 |
+| 1         | 157.78 |
++-----------+--------+
+```
+
+### 使用`having`进行分组后的筛选
 
 ```sql
 select client_id, sum(invoice_total) as total
@@ -489,7 +549,7 @@ group by client_id
 having total > 100;
 ```
 
-分组汇总
+### 分组汇总
 
 使用`with rollup`可以对每个分组的结果进行再次汇总统计。
 
@@ -500,6 +560,8 @@ from payments
 join payment_methods as pm on payment_method = pm.payment_method_id
 group by pm.name with rollup;
 ```
+
+结果中的最后一行是前面前的汇总：
 
 ```text
 +----------------+--------+
@@ -628,6 +690,20 @@ DATE_ADD(dt, INTERVAL n YEAR/...)|基于一个日期的加减
 DATEDIFF(dt1, dt2)|计算两个日期之间的间隔
 TIME_TO_SEC(time)|将时间转化为秒，以零点为起点
 
+### IFNULL语句
+
+```sql
+--- 如果expr1不为NULL，则返回expr，否则返回expr2
+ifnull (expr1, expr2)
+```
+
+### COALESCE语句
+
+```sql
+--- COALESCE语句返回一个列表中第一个非空的元素，如果列表中的元素都为NULL，则表达式最终返回NULL
+COALESCE(expr1, expr2,..., exprn)
+----
+```
 
 ### IF语句
 
@@ -1239,6 +1315,8 @@ create table if not exists customers(
 );
 -- 删除数据表
 drop table if exists customers;
+-- 清空表中的数据
+truncate table customers;
 -- 修改数据表
 alter table customers 
 	add address varchar(50) not null after last_name,
